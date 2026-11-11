@@ -2,6 +2,9 @@
 #define SSD1306_DISPLAY_H
 
 #include "display.h"
+#include "emotion_bitmaps.h"
+#include "emotion_manager.h"
+#include <string>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,6 +32,10 @@ private:
 
     lv_obj_t *square1 = NULL;   //眼睛
     lv_obj_t *square2 = NULL;
+    lv_obj_t* emotion_canvas_ = nullptr;
+    lv_obj_t* gif_img_ = nullptr;
+    bool emotion_mode_active_ = false;
+    bool gif_mode_active_ = false;
 
     int cur_square1_x = 0;
     int cur_square1_y = 0;
@@ -55,9 +62,15 @@ public:
     Sh1106Display(void* i2c_master_handle, int width, int height, bool mirror_x = false, bool mirror_y = false);
     ~Sh1106Display();
 
+    virtual void SetEmotion(const std::string& emotion) override;
     virtual void start_emtion() override;
     virtual void stop_emtion()  override;
     virtual void idle_emtion()  override;
+    void SetEmotion(Emotion emotion);
+    void SetEmotionForState(DeviceState state);
+    void ClearEmotion();
+    void ShowIdleGif();
+    void HideIdleGif();
 };
 
 #endif // SSD1306_DISPLAY_H

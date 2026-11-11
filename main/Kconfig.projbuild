@@ -38,6 +38,8 @@ choice BOARD_TYPE
         Board type. 开发板类型
     config BOARD_TYPE_BREAD_COMPACT_WIFI
         bool "面包板新版接线（WiFi）"
+        select LV_USE_GIF
+        select LV_GIF_CACHE_DECODE_DATA
     config BOARD_TYPE_BREAD_COMPACT_ML307
         bool "面包板新版接线（ML307 AT）"
     config BOARD_TYPE_ESP_BOX_3

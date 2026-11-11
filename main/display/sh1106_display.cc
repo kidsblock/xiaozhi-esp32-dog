@@ -6,7 +6,9 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 #include <esp_lvgl_port.h>
+#include <utility>
 #include "sh1106_display.h"
+#include "lazy_blink_gif.h"
 
 #define TAG "Sh1106Display"
 
@@ -111,6 +113,8 @@ Sh1106Display::Sh1106Display(void* i2c_master_handle, int width, int height, boo
 }
 
 Sh1106Display::~Sh1106Display() {
+    if (gif_img_ != nullptr) lv_obj_del(gif_img_);
+    if (emotion_canvas_ != nullptr) lv_obj_del(emotion_canvas_);
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -440,8 +444,101 @@ void Sh1106Display::eye_move_emtion_task()
     }
 }
 
+
+void Sh1106Display::SetEmotion(const std::string& emotion) {
+    static const std::pair<const char*, Emotion> map[] = {
+        {"neutral", EMOJI_HAPPY}, {"happy", EMOJI_HAPPY}, {"laughing", EMOJI_EXCITED},
+        {"funny", EMOJI_EXCITED}, {"sad", EMOJI_SAD}, {"angry", EMOJI_EXCITED},
+        {"crying", EMOJI_SAD}, {"loving", EMOJI_LOVE}, {"thinking", EMOJI_THINKING},
+        {"sleepy", EMOJI_SQUINT}, {"confused", EMOJI_SONFUSED}, {"surprised", EMOJI_EXCITED},
+        {"speaking", EMOJI_SPEAKING}
+    };
+    Emotion selected = EMOJI_HAPPY;
+    for (const auto& item : map) {
+        if (emotion == item.first) { selected = item.second; break; }
+    }
+    SetEmotion(selected);
+}
+
+void Sh1106Display::SetEmotion(Emotion emotion) {
+    if (!flag_iic) return;
+    DisplayLockGuard lock(this);
+    const EmotionInfo* info = get_emotion_info(emotion);
+    if (!info || !content_) return;
+    if (gif_img_) lv_obj_add_flag(gif_img_, LV_OBJ_FLAG_HIDDEN);
+    if (square1) lv_obj_add_flag(square1, LV_OBJ_FLAG_HIDDEN);
+    if (square2) lv_obj_add_flag(square2, LV_OBJ_FLAG_HIDDEN);
+    if (container_) lv_obj_clear_flag(container_, LV_OBJ_FLAG_HIDDEN);
+    if (!emotion_canvas_) {
+        emotion_canvas_ = lv_canvas_create(content_);
+        static uint8_t canvas_buf[LV_CANVAS_BUF_SIZE_INDEXED_1BIT(128, 48)];
+        lv_canvas_set_buffer(emotion_canvas_, canvas_buf, 128, 48, LV_IMG_CF_INDEXED_1BIT);
+        lv_canvas_set_palette(emotion_canvas_, 0, lv_color_hex(0x000000));
+        lv_canvas_set_palette(emotion_canvas_, 1, lv_color_hex(0xFFFFFF));
+        lv_obj_set_size(emotion_canvas_, 128, 48);
+        lv_obj_center(emotion_canvas_);
+    } else {
+        lv_obj_clear_flag(emotion_canvas_, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_canvas_fill_bg(emotion_canvas_, lv_color_hex(0), LV_OPA_COVER);
+    const uint16_t stride = (info->width + 7) / 8;
+    for (uint16_t y = 0; y < 48; ++y) {
+        for (uint16_t x = 0; x < 128; ++x) {
+            const uint16_t sx = (x * info->width) / 128;
+            const uint16_t sy = (y * info->height) / 48;
+            const uint32_t idx = sy * stride + sx / 8;
+            if (idx < info->size && ((info->data[idx] >> (7 - (sx % 8))) & 1)) {
+                lv_canvas_set_px_color(emotion_canvas_, x, y, lv_color_hex(0xFF));
+            }
+        }
+    }
+    emotion_mode_active_ = true;
+    gif_mode_active_ = false;
+}
+
+void Sh1106Display::SetEmotionForState(DeviceState state) {
+    SetEmotion(get_emotion_for_state(state));
+}
+
+void Sh1106Display::ClearEmotion() {
+    DisplayLockGuard lock(this);
+    if (emotion_canvas_) lv_obj_add_flag(emotion_canvas_, LV_OBJ_FLAG_HIDDEN);
+    if (emotion_label_) lv_obj_clear_flag(emotion_label_, LV_OBJ_FLAG_HIDDEN);
+    emotion_mode_active_ = false;
+}
+
+void Sh1106Display::ShowIdleGif() {
+    if (!flag_iic) return;
+    DisplayLockGuard lock(this);
+    if (emotion_canvas_) lv_obj_add_flag(emotion_canvas_, LV_OBJ_FLAG_HIDDEN);
+    if (square1) lv_obj_add_flag(square1, LV_OBJ_FLAG_HIDDEN);
+    if (square2) lv_obj_add_flag(square2, LV_OBJ_FLAG_HIDDEN);
+    if (container_) lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+    auto screen = lv_disp_get_scr_act(disp_);
+    if (!gif_img_) {
+        gif_img_ = lv_gif_create(screen);
+        lv_obj_set_size(gif_img_, 128, 64);
+        lv_obj_center(gif_img_);
+        lv_gif_set_src(gif_img_, &lazy_blink_gif);
+    } else {
+        lv_obj_clear_flag(gif_img_, LV_OBJ_FLAG_HIDDEN);
+        lv_gif_restart(gif_img_);
+    }
+    gif_mode_active_ = true;
+    emotion_mode_active_ = false;
+}
+
+void Sh1106Display::HideIdleGif() {
+    if (!flag_iic) return;
+    DisplayLockGuard lock(this);
+    if (gif_img_) lv_obj_add_flag(gif_img_, LV_OBJ_FLAG_HIDDEN);
+    if (container_) lv_obj_clear_flag(container_, LV_OBJ_FLAG_HIDDEN);
+    gif_mode_active_ = false;
+}
+
 void Sh1106Display::start_emtion()
 {
+    HideIdleGif();
     if (flag_iic == 0)
     {
         return;
@@ -468,6 +565,7 @@ void Sh1106Display::start_emtion()
 
 void Sh1106Display::stop_emtion()
 {
+    HideIdleGif();
     if (flag_iic == 0)
     {
         return;
@@ -488,6 +586,8 @@ void Sh1106Display::stop_emtion()
 
 void Sh1106Display::idle_emtion()
 {
+    ShowIdleGif();
+    return;
     if (flag_iic == 0)
     {
         return;
